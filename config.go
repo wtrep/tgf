@@ -170,10 +170,10 @@ func (config *TGFConfig) getAwsSession(duration int64) (*session.Session, error)
 		SharedConfigState: awsSession.SharedConfigEnable,
 		AssumeRoleTokenProvider: func() (string, error) {
 			askedForMfa = true
-			fmt.Fprintf(os.Stderr, "Touch your YubiKey...")
+			fmt.Fprintln(os.Stderr, "Touch your YubiKey...")
 			v, err := exec.Command("ykman", "oath", "accounts", "code", "--single").Output()
 			fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
-			return string(v), err
+			return strings.TrimSuffix(string(v), "\n"), err
 		},
 	}
 	if duration > 0 {
