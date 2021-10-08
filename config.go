@@ -31,7 +31,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/hashicorp/go-getter"
 	"github.com/inconshreveable/go-update"
-	"golang.org/x/crypto/ssh/terminal"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -171,9 +170,9 @@ func (config *TGFConfig) getAwsSession(duration int64) (*session.Session, error)
 		SharedConfigState: awsSession.SharedConfigEnable,
 		AssumeRoleTokenProvider: func() (string, error) {
 			askedForMfa = true
-			fmt.Fprintf(os.Stderr, "Assume Role MFA token code: ")
-			v, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "Touch your YubiKey...")
+			v, err := exec.Command("ykman", "oath", "accounts", "code", "--single").Output()
+			fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
 			return string(v), err
 		},
 	}
