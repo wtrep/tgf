@@ -172,7 +172,9 @@ func (config *TGFConfig) getAwsSession(duration int64) (*session.Session, error)
 			askedForMfa = true
 			fmt.Fprintln(os.Stderr, "Touch your YubiKey...")
 			v, err := exec.Command("ykman", "oath", "accounts", "code", "--single").Output()
-			fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
+			}
 			return strings.TrimSuffix(string(v), "\n"), err
 		},
 	}
