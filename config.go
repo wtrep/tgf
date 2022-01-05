@@ -171,7 +171,7 @@ func (config *TGFConfig) getAwsSession(duration int64) (*session.Session, error)
 		AssumeRoleTokenProvider: func() (string, error) {
 			askedForMfa = true
 			fmt.Fprintln(os.Stderr, "Touch your YubiKey...")
-			v, err := exec.Command("ykman", "oath", "accounts", "code", "--single").Output()
+			v, err := exec.Command("ykman", "oath", "accounts", "code", "arn:aws:iam::916842903476:mfa/wtrepanier", "--single").Output()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
 			}
