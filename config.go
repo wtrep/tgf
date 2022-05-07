@@ -183,7 +183,14 @@ func (tgfConfig *TGFConfig) getAwsConfig(assumeRoleDuration time.Duration) (aws.
 				aws.LogResponseEventMessage,
 		),
 		awsConfig.WithAssumeRoleCredentialOptions(func(o *stscreds.AssumeRoleOptions) {
-			o.TokenProvider = stscreds.StdinTokenProvider
+			o.TokenProvider = func() (string, error) {
+				fmt.Fprintln(os.Stderr, "Touch your YubiKey...")
+				v, err := exec.Command("ykman", "oath", "accounts", "code", "arn:aws:iam::916842903476:mfa/wtrepanier", "--single").Output()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Successfully retrived OATH code from YubiKey")
+				}
+				return strings.TrimSuffix(string(v), "\n"), err
+			}
 			if assumeRoleDuration > 0 {
 				o.Duration = assumeRoleDuration
 			}
