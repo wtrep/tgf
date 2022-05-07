@@ -18,12 +18,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ecr"
-	"github.com/blang/semver"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/blang/semver/v4"
 	"github.com/coveooss/gotemplate/v3/collections"
 	"github.com/coveooss/gotemplate/v3/utils"
+	"github.com/coveooss/multilogger/errors"
 	"github.com/coveooss/multilogger/reutils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -118,6 +118,9 @@ func (docker *dockerConfig) call() int {
 	} else if app.TempDirMountLocation != mountLocNone {
 		// If temp location is not disabled, we persist the home folder in a docker volume
 		imageSummary := getImageSummary(imageName)
+		if imageSummary == nil {
+			panic(errors.Managed(fmt.Sprintf("Unable to load image %v", imageName)))
+		}
 		image := inspectImage(imageSummary.ID)
 		username := currentUser.Username
 
@@ -415,7 +418,7 @@ func (docker *dockerConfig) GetActualImageVersion() string {
 func getDockerClient() (*client.Client, context.Context) {
 	if dockerClient == nil {
 		os.Setenv("DOCKER_API_VERSION", minimumDockerVersion)
-		dockerClient = must(client.NewEnvClient()).(*client.Client)
+		dockerClient = must(client.NewClientWithOpts(client.FromEnv)).(*client.Client)
 		dockerContext = context.Background()
 	}
 	return dockerClient, dockerContext
@@ -492,33 +495,56 @@ func (docker *dockerConfig) refreshImage(image string) {
 	}
 
 	log.Debugln("Checking if there is a newer version of docker image", image)
-	err := getDockerUpdateCmd(image).Run()
-	if err != nil {
-		matches, _ := reutils.MultiMatch(image, reECR)
-		account, accountOk := matches["account"]
-		region, regionOk := matches["region"]
-		if accountOk && regionOk && docker.awsConfigExist() {
-			log.Debugf("Failed to pull %v. It is an ECR image, trying again after a login.\n", image)
-			loginToECR(account, region)
-			must(getDockerUpdateCmd(image).Run())
+
+	for try := 0; try < 2; try++ {
+		var stderr bytes.Buffer
+		cmd := getDockerUpdateCmd(image)
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err == nil {
+			break
+		} else if try == 0 && docker.awsConfigExist() {
+			log.Debugf("Failed to pull %v. It is an ECR image, trying again after login to AWS ECR.", image)
+			if err = docker.tryLoginToECR(image); err == nil {
+				continue
+			} else {
+				panic(err)
+			}
+		} else if stderr.Len() > 0 {
+			panic(errors.Managed(stderr.String()))
 		} else {
 			panic(err)
 		}
 	}
 	touchImageRefresh(image)
-	log.Println()
 }
 
-func loginToECR(account string, region string) {
-	awsSession := session.Must(session.NewSessionWithOptions(session.Options{SharedConfigState: session.SharedConfigEnable}))
-	svc := ecr.New(awsSession, &aws.Config{Region: aws.String(region)})
-	requestInput := &ecr.GetAuthorizationTokenInput{RegistryIds: []*string{aws.String(account)}}
-	result := must(svc.GetAuthorizationToken(requestInput)).(*ecr.GetAuthorizationTokenOutput)
+func (docker *dockerConfig) tryLoginToECR(image string) error {
+	matches, _ := reutils.MultiMatch(image, reECR)
+	account, accountOk := matches["account"]
+	region, regionOk := matches["region"]
+	if !(accountOk && regionOk) {
+		return errors.Managed(fmt.Sprintf("%v is not an ECR image", image))
+	}
+	config := must(docker.getAwsConfig(0)).(aws.Config)
+	config.Region = region
+	svc := ecr.NewFromConfig(config)
+	requestInput := &ecr.GetAuthorizationTokenInput{RegistryIds: []string{account}}
+	result := must(svc.GetAuthorizationToken(context.TODO(), requestInput)).(*ecr.GetAuthorizationTokenOutput)
 
 	decodedLogin := string(must(base64.StdEncoding.DecodeString(*result.AuthorizationData[0].AuthorizationToken)).([]byte))
-	dockerUpdateCmd := exec.Command("docker", "login", "-u", strings.Split(decodedLogin, ":")[0],
-		"-p", strings.Split(decodedLogin, ":")[1], *result.AuthorizationData[0].ProxyEndpoint)
-	must(dockerUpdateCmd.Run())
+	dockerLoginCmd := exec.Command(
+		"docker", "login", "-u",
+		strings.Split(decodedLogin, ":")[0],
+		"--password-stdin",
+		*result.AuthorizationData[0].ProxyEndpoint,
+	)
+	dockerLoginCmd.Stdin = strings.NewReader(strings.Split(decodedLogin, ":")[1])
+	dockerLoginCmd.Stdout, dockerLoginCmd.Stderr = os.Stdout, os.Stderr
+	if err := dockerLoginCmd.Run(); err != nil {
+		return errors.Managed(err.Error())
+	}
+
+	return nil
 }
 
 func getDockerUpdateCmd(image string) *exec.Cmd {
@@ -576,7 +602,7 @@ var windowsMessage = `
 You may have to share your drives with your Docker virtual machine to make them accessible.
 
 On Windows 10+ using Hyper-V to run Docker, simply right click on Docker icon in your tray and
-choose "Settings", then go to "Shared Drives" and enable the share for the drives you want to 
+choose "Settings", then go to "Shared Drives" and enable the share for the drives you want to
 be accessible to your dockers.
 
 On previous version using VirtualBox, start the VirtualBox application and add shared drives
