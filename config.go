@@ -162,18 +162,13 @@ func (config TGFConfig) String() string {
 
 var cachedAwsConfig *aws.Config
 
-func (tgfConfig *TGFConfig) getAwsConfig(assumeRoleDuration time.Duration) (aws.Config, error) {
-	if cachedAwsConfig != nil {
-		log.Debug("Using cached AWS config")
-		return *cachedAwsConfig, nil
-	}
-
+func (tgfConfig *TGFConfig) loadDefaultConfig(assumeRoleDuration time.Duration) (aws.Config, error) {
 	log.Debugf("Creating new AWS config (assumeRoleDuration=%s)", assumeRoleDuration)
-	config, err := awsConfig.LoadDefaultConfig(
+	return awsConfig.LoadDefaultConfig(
 		context.TODO(),
 		awsConfig.WithSharedConfigProfile(tgfConfig.tgf.AwsProfile),
 		awsConfig.WithLogger(awsLogger),
-		// The logger level controlled by the --aws-debug flag controls whether or not the logs are shown.
+		// The logger level controlled by the --aws-debug flag controls whether the logs are shown.
 		// With that in mind, we just let the AWS SDK blindly log and rely on the logger to decide if it should print or not.
 		awsConfig.WithClientLogMode(
 			aws.LogRetries|
@@ -196,7 +191,15 @@ func (tgfConfig *TGFConfig) getAwsConfig(assumeRoleDuration time.Duration) (aws.
 			}
 		}),
 	)
+}
 
+func (tgfConfig *TGFConfig) getAwsConfig(assumeRoleDuration time.Duration) (aws.Config, error) {
+	if cachedAwsConfig != nil {
+		log.Debug("Using cached AWS config")
+		return *cachedAwsConfig, nil
+	}
+
+	config, err := tgfConfig.loadDefaultConfig(assumeRoleDuration)
 	if err != nil {
 		return config, err
 	}
@@ -224,7 +227,7 @@ func (tgfConfig *TGFConfig) getAwsConfig(assumeRoleDuration time.Duration) (aws.
 		)
 
 		shortConfig := config
-		config, err = tgfConfig.getAwsConfig(newDuration)
+		config, err = tgfConfig.loadDefaultConfig(assumeRoleDuration)
 		if err != nil {
 			log.Warning("Failed to extend current AWS session, will use the current short duration.", err)
 			config = shortConfig
@@ -549,8 +552,8 @@ func (config *TGFConfig) readSSMParameterStore(ssmParameterFolder string) map[st
 	svc := ssm.NewFromConfig(awsConfig)
 	response, err := svc.GetParametersByPath(context.TODO(), &ssm.GetParametersByPathInput{
 		Path:           aws.String(ssmParameterFolder),
-		Recursive:      true,
-		WithDecryption: true,
+		Recursive:      aws.Bool(true),
+		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
 		log.Warningf("Caught an error while reading from `%s` in SSM: %v", ssmParameterFolder, err)
