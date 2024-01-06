@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - master
+      - main
 
 jobs:
   posix:
@@ -13,12 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - run: ./get-latest-tgf.sh
 
   windows:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - run: ./get-latest-tgf.ps1
